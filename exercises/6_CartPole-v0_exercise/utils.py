@@ -2,6 +2,8 @@ import gym
 import numpy as np
 import random
 from sklearn.exceptions import NotFittedError
+
+from tensorflow.keras import Model
 from tensorflow.keras import models as M
 from tensorflow.keras import layers as L
 from tensorflow.keras.optimizers import Adam
@@ -13,23 +15,17 @@ ENV = gym.make('CartPole-v0')
 class QDNN:
     """The state action value function."""
     def __init__(self, model=None):
-
-        # The action space has dimension 1.
-        self.input_dim = ENV.observation_space.shape[0] + 1
-
         if model is None:
             model = M.Sequential()
-            model.add(L.Input(shape=(self.input_dim,)))
+            model.add(L.Input(shape=(5,)))  # 4 state space dim + 1 action space dim
             model.add(L.Normalization(name='normalization'))
-            model.add(L.Dense(24, activation='relu'))
-            model.add(L.Dense(24, activation='relu'))
-            model.add(L.Dense(24, activation='relu'))
-            model.add(L.Dense(1, activation='relu'))
-            model.add(L.Activation('linear'))
+            model.add(L.Dense(32, activation='relu'))
+            model.add(L.Dense(32, activation='relu'))
+            model.add(L.Dense(1, activation='linear'))
             model.compile(
-                optimizer=Adam(learning_rate=0.001),
+                optimizer=Adam(learning_rate=0.00005),
                 loss='mse',
-                metrics=['mae', 'mse']
+                metrics=['mse']
             )
         self.normalization = model.get_layer('normalization')
         self.model = model
@@ -65,13 +61,13 @@ def normalization_adapt(Q, experience):
     Q.normalization.adapt(X)
 
 
-def replay(Q, experience, gamma, batch_size, epochs, training_size):
+def replay(Q, experience, gamma, batch_size, training_size, initial_epoch, epochs, log_dir):
     """Experience replay. Fit based on cached experience."""
 
     # The time series has a high degree of autocorrelation across each episode.
     # Taking a random sample decreases this correlation/dependence.
     # This is the main idea of experience replay.
-    minibatch = random.choices(experience, k=training_size)
+    minibatch = experience.sample(training_size)
 
     Xs = []
     ys = []
@@ -93,14 +89,13 @@ def replay(Q, experience, gamma, batch_size, epochs, training_size):
     X = np.array(Xs)
     y = np.array(ys)
     Q.model.fit(
-        X,
-        y,
+        X, y,
         batch_size=batch_size,
+        initial_epoch=initial_epoch,
         epochs=epochs,
         validation_split=0.1,
         callbacks=[
-            C.TensorBoard('./logs', update_freq=1),
-            C.EarlyStopping(patience=2),
+            C.TensorBoard(log_dir + '/fit'),
             C.ModelCheckpoint(
                 filepath='best_model.h5',
                 save_weights_only=False,
@@ -108,12 +103,11 @@ def replay(Q, experience, gamma, batch_size, epochs, training_size):
                 mode='max',
                 save_best_only=True
             )
-        ]
+        ],
     )
 
 
 def run_episode(Q, epsilon=0, render=False):
-    """Generate an episode."""
     experience = []
     try:
         state = ENV.reset()
@@ -141,5 +135,5 @@ def run_episode(Q, epsilon=0, render=False):
             # Current state/reward.
             state = new_state
     finally:
-        ENV.close()
+        ENV.reset()
     return experience
